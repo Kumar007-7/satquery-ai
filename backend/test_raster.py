@@ -2,7 +2,7 @@ import rasterio
 import numpy as np
 from rasterio.transform import from_origin
 
-from app.ingestion.raster import inspect_raster
+from app.ingestion.raster import inspect_raster, create_preview
 
 
 # Create a tiny 10x10 GeoTIFF
@@ -24,3 +24,6 @@ with rasterio.open(
 metadata = inspect_raster("test.tif")
 
 print(metadata)
+create_preview("test.tif", "test_preview.png")
+
+print("Preview created successfully")

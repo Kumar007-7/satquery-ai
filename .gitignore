@@ -4,6 +4,8 @@ __pycache__/
 *.py[cod]
 
 test.tif
+test_preview.png
+preview_test.png
 uploads/
 
 .env

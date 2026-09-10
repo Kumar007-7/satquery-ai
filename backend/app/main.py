@@ -1,8 +1,9 @@
-from fastapi import FastAPI, UploadFile, File
+from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi.responses import FileResponse
 import shutil
 import os
 
-from backend.app.ingestion.raster import inspect_raster
+from backend.app.ingestion.raster import inspect_raster, create_preview
 
 
 app = FastAPI(title="SatQuery AI")
@@ -17,16 +18,60 @@ def root():
 
 @app.post("/inspect-raster")
 def inspect_uploaded_raster(file: UploadFile = File(...)):
+    if not file.filename:
+        raise HTTPException(
+            status_code=400,
+            detail="No file provided"
+        )
+
+    filename = os.path.basename(file.filename)
+
+    if not filename.lower().endswith((".tif", ".tiff")):
+        raise HTTPException(
+            status_code=400,
+            detail="Only .tif and .tiff files are supported"
+        )
+
     os.makedirs("uploads", exist_ok=True)
 
-    file_path = os.path.join("uploads", file.filename)
+    file_path = os.path.join("uploads", filename)
 
-    with open(file_path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
+    try:
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
 
-    metadata = inspect_raster(file_path)
+        metadata = inspect_raster(file_path)
 
-    return {
-        "filename": file.filename,
-        "metadata": metadata
-    }
+        preview_filename = os.path.splitext(filename)[0] + "_preview.png"
+        preview_path = os.path.join("uploads", preview_filename)
+
+        create_preview(file_path, preview_path)
+
+        return {
+            "filename": filename,
+            "metadata": metadata,
+            "preview": preview_filename
+        }
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unable to read raster file: {str(e)}"
+        )
+
+
+@app.get("/preview/{filename}")
+def get_preview(filename: str):
+    filename = os.path.basename(filename)
+    file_path = os.path.join("uploads", filename)
+
+    if not os.path.exists(file_path):
+        raise HTTPException(
+            status_code=404,
+            detail="Preview not found"
+        )
+
+    return FileResponse(
+        file_path,
+        media_type="image/png"
+    )
