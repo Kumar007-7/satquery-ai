@@ -17,10 +17,14 @@ function App() {
   const [activeTab, setActiveTab] = useState("analysis");
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [showDetails, setShowDetails] = useState(false);
+
   const [imageData, setImageData] = useState(null);
+
   const [isUploading, setIsUploading] = useState(false);
   const [uploadError, setUploadError] = useState("");
 
+  const [analysisResult, setAnalysisResult] = useState(null);
+  const [analysisError, setAnalysisError] = useState("");
   const modeIndex = {
     image: 0,
     map: 1,
@@ -105,18 +109,53 @@ function App() {
     setQuery(suggestion);
   };
 
-  const handleAnalyze = () => {
-    if (!query.trim() || !files.length) {
-      return;
+  const handleAnalyze = async () => {
+  if (!query.trim() || !files.length || isAnalyzing) {
+    return;
+  }
+
+  setIsAnalyzing(true);
+  setAnalysisError("");
+  setAnalysisResult(null);
+  setActiveTab("analysis");
+
+  try {
+    const requestBody = {
+      query: query.trim(),
+      image_id: imageData?.filename || files[0]?.name || null,
+      image_id_2: files.length > 1 ? files[1]?.name || null : null,
+    };
+
+    const response = await fetch(
+      "http://127.0.0.1:8000/analyze",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(requestBody),
+      }
+    );
+
+    const result = await response.json();
+
+    if (!response.ok) {
+      throw new Error(
+        result.detail || "Analysis request failed."
+      );
     }
 
-    setIsAnalyzing(true);
+    setAnalysisResult(result);
+  } catch (error) {
+    console.error("Analysis error:", error);
 
-    setTimeout(() => {
-      setIsAnalyzing(false);
-      setActiveTab("analysis");
-    }, 1800);
-  };
+    setAnalysisError(
+      error.message || "Unable to analyze the imagery."
+    );
+  } finally {
+    setIsAnalyzing(false);
+  }
+};
 
   return (
     <div className="app-shell">
@@ -578,57 +617,83 @@ function App() {
                 </div>
 
                 {activeTab === "analysis" && (
-                  <>
-                    <div className="analysis-state">
-                      <div className="state-icon">
-                        ✦
-                      </div>
-
-                      <div>
-                        <span className="state-label">
-                          ANALYSIS STATUS
-                        </span>
-
-                        <h3>
-                          {isAnalyzing
-                            ? "Processing query..."
-                            : "Awaiting analysis"}
-                        </h3>
-
-                        <p>
-                          The controller will classify
-                          your question and select the
-                          appropriate specialist
-                          capability.
-                        </p>
-                      </div>
+                <>
+                  <div className="analysis-state">
+                    <div className="state-icon">
+                      ✦
                     </div>
 
-                    <div className="metrics">
-                      <Metric
-                        label="TASK"
-                        value="AUTO ROUTE"
-                      />
+                    <div>
+                      <span className="state-label">
+                        ANALYSIS STATUS
+                      </span>
 
-                      <Metric
-                        label="MODEL"
-                        value="—"
-                      />
+                      <h3>
+                        {isAnalyzing
+                          ? "Processing query..."
+                          : analysisError
+                          ? "Analysis failed"
+                          : analysisResult
+                          ? "Analysis complete"
+                          : "Awaiting analysis"}
+                      </h3>
 
-                      <Metric
-                        label="CONFIDENCE"
-                        value="—"
-                      />
-
-                      <Metric
-                        label="EVIDENCE"
-                        value="PENDING"
-                      />
+                      <p>
+                        {isAnalyzing
+                          ? "The controller is classifying your query and selecting the appropriate specialist capability."
+                          : analysisError
+                          ? analysisError
+                          : analysisResult
+                          ? analysisResult.answer
+                          : "The controller will classify your question and select the appropriate specialist capability."}
+                      </p>
                     </div>
+                  </div>
 
-                    <TracePreview />
-                  </>
-                )}
+                  <div className="metrics">
+                    <Metric
+                      label="TASK"
+                      value={
+                        analysisResult?.task || "AUTO ROUTE"
+                      }
+                    />
+
+                    <Metric
+                      label="MODEL"
+                      value={
+                        analysisResult
+                          ? `${analysisResult.task} SPECIALIST`
+                          : "—"
+                      }
+                    />
+
+                    <Metric
+                      label="CONFIDENCE"
+                      value={
+                        analysisResult
+                          ? `${Math.round(
+                              analysisResult.confidence * 100
+                            )}%`
+                          : "—"
+                      }
+                    />
+
+                    <Metric
+                      label="EVIDENCE"
+                      value={
+                        analysisResult
+                          ? "GENERATED"
+                          : "PENDING"
+                      }
+                    />
+                  </div>
+
+                  <TracePreview
+                    analysisResult={analysisResult}
+                    isAnalyzing={isAnalyzing}
+                  />
+                </>
+              )}
 
                 {activeTab === "evidence" && (
                   <div className="empty-result">
@@ -652,35 +717,60 @@ function App() {
 
                 {activeTab === "trace" && (
                   <div className="trace">
-                    <TraceStep
-                      number="01"
-                      title="Image ingestion"
-                      description="Parse format, bands, modality and metadata"
-                    />
+                    {analysisResult?.execution_trace?.length ? (
+                      analysisResult.execution_trace.map((item, index) => (
+                        <TraceStep
+                          key={`${item.step}-${index}`}
+                          number={String(index + 1).padStart(2, "0")}
+                          title={item.step}
+                          description={
+                            item.status === "stub"
+                              ? "Specialist execution is currently using a placeholder."
+                              : item.status === "warning"
+                              ? "The controller could not confidently route this request."
+                              : "Step completed successfully."
+                          }
+                          status={item.status}
+                        />
+                      ))
+                    ) : (
+                      <>
+                        <TraceStep
+                          number="01"
+                          title="Image ingestion"
+                          description="Parse format, bands, modality and metadata"
+                          status="waiting"
+                        />
 
-                    <TraceStep
-                      number="02"
-                      title="Query classification"
-                      description="Determine the required analysis task"
-                    />
+                        <TraceStep
+                          number="02"
+                          title="Query classification"
+                          description="Determine the required analysis task"
+                          status="waiting"
+                        />
 
-                    <TraceStep
-                      number="03"
-                      title="Specialist selection"
-                      description="Select the appropriate model or tool"
-                    />
+                        <TraceStep
+                          number="03"
+                          title="Specialist selection"
+                          description="Select the appropriate model or tool"
+                          status="waiting"
+                        />
 
-                    <TraceStep
-                      number="04"
-                      title="Evidence generation"
-                      description="Generate spatial and textual evidence"
-                    />
+                        <TraceStep
+                          number="04"
+                          title="Evidence generation"
+                          description="Generate spatial and textual evidence"
+                          status="waiting"
+                        />
 
-                    <TraceStep
-                      number="05"
-                      title="Output integration"
-                      description="Combine answer, confidence and evidence"
-                    />
+                        <TraceStep
+                          number="05"
+                          title="Output integration"
+                          description="Combine answer, confidence and evidence"
+                          status="waiting"
+                        />
+                      </>
+                    )}
                   </div>
                 )}
 
@@ -807,7 +897,12 @@ function RasterCanvas({
   );
 }
 
-function TracePreview() {
+function TracePreview({
+  analysisResult,
+  isAnalyzing,
+}) {
+  const trace = analysisResult?.execution_trace || [];
+
   return (
     <div className="trace-preview">
       <div className="trace-preview-header">
@@ -816,37 +911,66 @@ function TracePreview() {
         </span>
 
         <span className="trace-preview-state">
-          IDLE
+          {isAnalyzing
+            ? "RUNNING"
+            : analysisResult
+            ? "COMPLETE"
+            : "IDLE"}
         </span>
       </div>
 
-      <div className="trace-stepper">
-        <span className="trace-node" />
+      {analysisResult ? (
+        <div className="trace-result-list">
+          {trace.map((item, index) => (
+            <div
+              className="trace-result-item"
+              key={`${item.step}-${index}`}
+            >
+              <span className="trace-result-number">
+                {String(index + 1).padStart(2, "0")}
+              </span>
 
-        <span className="trace-line" />
+              <span className="trace-result-step">
+                {item.step}
+              </span>
 
-        <span className="trace-node" />
+              <span className="trace-result-status">
+                {item.status.toUpperCase()}
+              </span>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <>
+          <div className="trace-stepper">
+            <span className="trace-node" />
 
-        <span className="trace-line" />
+            <span className="trace-line" />
 
-        <span className="trace-node" />
+            <span className="trace-node" />
 
-        <span className="trace-line" />
+            <span className="trace-line" />
 
-        <span className="trace-node" />
+            <span className="trace-node" />
 
-        <span className="trace-line" />
+            <span className="trace-line" />
 
-        <span className="trace-node" />
-      </div>
+            <span className="trace-node" />
 
-      <div className="trace-step-labels">
-        <span>INGEST</span>
-        <span>ROUTE</span>
-        <span>MODEL</span>
-        <span>EVIDENCE</span>
-        <span>REPORT</span>
-      </div>
+            <span className="trace-line" />
+
+            <span className="trace-node" />
+          </div>
+
+          <div className="trace-step-labels">
+            <span>INGEST</span>
+            <span>ROUTE</span>
+            <span>MODEL</span>
+            <span>EVIDENCE</span>
+            <span>REPORT</span>
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -891,9 +1015,23 @@ function TraceStep({
   number,
   title,
   description,
+  status = "waiting",
 }) {
+  const normalizedStatus = status.toLowerCase();
+
+  const statusLabel =
+    normalizedStatus === "complete"
+      ? "COMPLETE"
+      : normalizedStatus === "stub"
+      ? "STUB"
+      : normalizedStatus === "warning"
+      ? "WARNING"
+      : normalizedStatus === "running"
+      ? "RUNNING"
+      : "WAITING";
+
   return (
-    <div className="trace-step">
+    <div className={`trace-step trace-${normalizedStatus}`}>
       <div className="trace-marker">
         <span>{number}</span>
       </div>
@@ -904,7 +1042,7 @@ function TraceStep({
       </div>
 
       <span className="trace-waiting">
-        WAITING
+        {statusLabel}
       </span>
     </div>
   );
