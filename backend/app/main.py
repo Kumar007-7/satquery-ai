@@ -5,6 +5,8 @@ import shutil
 import os
 
 from backend.app.ingestion.raster import inspect_raster, create_preview
+from backend.app.controller.controller import analyze_query
+from backend.app.models.query import AnalyzeRequest, AnalyzeResponse
 
 
 app = FastAPI(title="SatQuery AI")
@@ -85,3 +87,18 @@ def get_preview(filename: str):
         file_path,
         media_type="image/png"
     )
+
+
+@app.post(
+    "/analyze",
+    response_model=AnalyzeResponse,
+)
+def analyze(request: AnalyzeRequest):
+    try:
+        return analyze_query(request)
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Analysis failed: {str(e)}",
+        )
